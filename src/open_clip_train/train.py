@@ -61,7 +61,7 @@ def backward(total_loss, scaler):
         total_loss.backward()
 
 
-def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
+def train_one_epoch(model, model_old, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision, device_type=device.type)
     input_dtype = get_input_dtype(args.precision)
@@ -100,6 +100,14 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             with autocast():
                 model_out = model(images, texts)
                 logit_scale = model_out["logit_scale"]
+
+                with torch.no_grad():
+                    old_model_out = model_old(images, texts)
+
+                # 3. Add old features to model_out so your extended loss sees them
+                model_out["x_old"] = old_model_out["image_features"]
+                model_out["y_old"] = old_model_out["text_features"]
+
                 if args.distill:
                     with torch.no_grad():
                         dist_model_out = dist_model(images, texts)

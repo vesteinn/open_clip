@@ -217,7 +217,7 @@ def main(args):
         args.force_image_size = args.force_image_size[0]
     random_seed(args.seed, 0)
     model_kwargs = {}
-    if args.siglip:
+    if args.siglip or args.siglipextended:
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
         model_kwargs['init_logit_bias'] = -10
     model, preprocess_train, preprocess_val = create_model_and_transforms(
@@ -476,11 +476,19 @@ def main(args):
 
     loss = create_loss(args)
 
+    model_old = copy.deepcopy(model)
+    model_old.eval()  # puts it in eval mode (no dropout, etc.)
+    for param in model_old.parameters():
+        param.requires_grad = False  # freeze
+
+    # If you’re using GPU:
+    model_old = model_old.to(device)
+
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
 
-        train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
+        train_one_epoch(model, model_old, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):

@@ -470,11 +470,49 @@ def parse_args(args):
         help='Use SigLip (sigmoid) loss.'
     )
     parser.add_argument(
+        "--siglipextended",
+        default=False,
+        action="store_true",
+        help='Use SigLip (sigmoid) loss with regularisation.'
+    )
+    parser.add_argument(
         "--loss-dist-impl",
         default=None,
         type=str,
         help='A string to specify a specific distributed loss implementation.'
     )
+
+    parser.add_argument(
+        "--lambda_align", 
+        type=float, 
+        default=1.0, 
+        help="Coefficient for alignment loss."
+    )
+    parser.add_argument(
+        "--lambda_unif", 
+        type=float, 
+        default=1.0, 
+        help="Coefficient for uniformity loss."
+    )
+    parser.add_argument(
+        "--lambda_spectral", 
+        type=float, 
+        default=0.0, 
+        help="Coefficient for spectral loss."
+    )
+    parser.add_argument(
+        "--lambda_prox", 
+        type=float, 
+        default=0.1, 
+        help="Coefficient for embedding proximity loss."
+    )
+    parser.add_argument(
+        "--uniformity_t", 
+        type=float, 
+        default=2.0, 
+        help="Temperature (t) for the uniformity loss."
+    )
+
 
     args = parser.parse_args(args)
 

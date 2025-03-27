@@ -446,3 +446,128 @@ class SigLipLoss(nn.Module):
                 assert False
 
         return {"contrastive_loss": loss} if output_dict else loss
+
+
+
+
+def alignment_loss(x, y):
+    return (x - y).pow(2).sum(dim=1).mean()
+
+
+def uniformity_loss(z, t=2.0):
+    # pdist not implemented for half, so upcast to float32
+    z_32 = z.float()
+    sq_pdist = torch.pdist(z_32, p=2).pow(2)
+    return torch.log(torch.exp(-t * sq_pdist).mean() + 1e-8)
+
+
+def spectral_regularization(z):
+    z_32 = z.float()
+    z_centered = z_32 - z_32.mean(dim=0, keepdim=True)
+    cov = (z_centered.T @ z_centered) / (z.shape[0] - 1)
+    off_diag = cov - torch.diag(torch.diag(cov))
+    return (off_diag ** 2).sum() / z.shape[1]
+
+
+def embedding_proximity_loss(x_new, y_new, x_old, y_old):
+    return F.mse_loss(x_new, x_old) + F.mse_loss(y_new, y_old)
+
+
+class SigLipExtendedLoss(nn.Module):
+    """
+    Wrap SigLipLoss (the base contrastive) with extra regularization terms
+    to combat representation collapse (alignment, uniformity, spectral, etc.).
+    """
+    def __init__(
+        self,
+        cache_labels: bool = False,
+        rank: int = 0,
+        world_size: int = 1,
+        dist_impl: str = 'bidir',
+        # Add hyperparameters for each penalty you want
+        lambda_align: float = 1.0,
+        lambda_unif: float = 1.0,
+        lambda_spectral: float = 0.001,
+        lambda_prox: float = 0.1,
+        t: float = 2.0
+    ):
+        super().__init__()
+        # Create (or wrap) your base SigLip
+        self.siglip_loss = SigLipLoss(
+            cache_labels=cache_labels,
+            rank=rank,
+            world_size=world_size,
+            dist_impl=dist_impl
+        )
+        # Store your penalty hyperparameters
+        self.lambda_align = lambda_align
+        self.lambda_unif = lambda_unif
+        self.lambda_spectral = lambda_spectral
+        self.lambda_prox = lambda_prox
+        self.t = t
+
+    def forward(self, image_features, text_features, logit_scale, x_old=None, y_old=None, logit_bias=None, output_dict=False):
+        """
+        image_features: [N, D]
+        text_features:  [N, D]
+        Typically pass in normalized embeddings if you want uniformity to work as intended.
+        """
+        # --------------------------------------------------
+        # 1) First compute base SigLip contrastive loss
+        # --------------------------------------------------
+        # This returns {"contrastive_loss": val} if output_dict=True
+        # or just a scalar if output_dict=False.
+        # We'll force output_dict=True internally so we can combine everything.
+        base_losses = self.siglip_loss(
+            image_features,
+            text_features,
+            logit_scale,
+            logit_bias,
+            output_dict=True
+        )
+        contrastive_loss = base_losses["contrastive_loss"]
+
+        # --------------------------------------------------
+        # 2) Compute additional regularization terms
+        # --------------------------------------------------
+
+        # alignment = mean squared difference between the two modalities
+        align_loss = alignment_loss(image_features, text_features)
+
+        # uniformity = push embeddings apart
+        unif_loss = 0.5 * (
+            uniformity_loss(image_features, self.t) +
+            uniformity_loss(text_features, self.t)
+        )
+
+        # spectral regularization
+        spec_loss = 0.5 * (
+            spectral_regularization(image_features) +
+            spectral_regularization(text_features)
+        )
+
+        proxim_loss = embedding_proximity_loss(image_features, text_features, x_old, y_old)
+
+        # --------------------------------------------------
+        # 3) Combine them into a total
+        # --------------------------------------------------
+        total_loss = contrastive_loss
+        total_loss += self.lambda_align * align_loss
+        total_loss += self.lambda_unif * unif_loss
+        total_loss += self.lambda_spectral * spec_loss
+
+        out = {
+            "contrastive_loss": contrastive_loss,
+            "alignment_loss": align_loss,
+            "uniformity_loss": unif_loss,
+            "spectral_loss": spec_loss,
+        }
+
+        if x_old is not None and y_old is not None:
+            prox = embedding_proximity_loss(image_features, text_features, x_old, y_old)
+            total_loss += self.lambda_prox * prox
+            out["proximity_loss"] = prox
+ 
+        # out["loss"] = total_loss
+        # Respect the output_dict flag so that your training code can handle it
+        return out if output_dict else total_loss
