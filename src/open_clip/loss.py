@@ -551,23 +551,18 @@ class SigLipExtendedLoss(nn.Module):
         # --------------------------------------------------
         # 3) Combine them into a total
         # --------------------------------------------------
-        total_loss = contrastive_loss
-        total_loss += self.lambda_align * align_loss
-        total_loss += self.lambda_unif * unif_loss
-        total_loss += self.lambda_spectral * spec_loss
-
+      
         out = {
             "contrastive_loss": contrastive_loss,
-            "alignment_loss": align_loss,
-            "uniformity_loss": unif_loss,
-            "spectral_loss": spec_loss,
+            "alignment_loss": align_loss * self.lambda_align,
+            "uniformity_loss": unif_loss * self.lambda_unif,
+            "spectral_loss": spec_loss * self.lambda_spectral
         }
 
         if x_old is not None and y_old is not None:
             prox = embedding_proximity_loss(image_features, text_features, x_old, y_old)
-            total_loss += self.lambda_prox * prox
-            out["proximity_loss"] = prox
- 
+            out["proximity_loss"] = prox * self.lambda_prox
+
         # out["loss"] = total_loss
         # Respect the output_dict flag so that your training code can handle it
         return out if output_dict else total_loss
